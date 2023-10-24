@@ -169,6 +169,7 @@ Explain the `useMobileWalletAdapterSession` hook and how it allows us to capture
 
 ### 2. Create the App
 
+Going to take out the verification.
 
 
 ```bash
