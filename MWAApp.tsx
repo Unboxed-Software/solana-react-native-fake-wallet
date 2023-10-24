@@ -24,7 +24,6 @@ import {
   resolve,
   useMobileWalletAdapterSession,
 } from './lib/mobile-wallet-adapter-walletlib/src';
-import ClientTrustProvider from './components/ClientTrustProvider';
 import {
   ClientTrust,
   NotVerifiable,
@@ -43,16 +42,26 @@ const styles = StyleSheet.create({
   },
 });
 
-function getRequestScreenComponent(request: MWARequest | null | undefined) {
+function getRequestScreenComponent(request: MWARequest | null | undefined, clientTrust: ClientTrust | null) {
+
+  if (!request) {
+    return <Text>No request</Text>;
+  }
+
+  if (!clientTrust) {
+    return <Text>No client trust</Text>;
+  }
+
   switch (request?.__type) {
     case MWARequestType.AuthorizeDappRequest:
       return (
-        <AuthorizeDappRequestScreen request={request as AuthorizeDappRequest} />
+        <AuthorizeDappRequestScreen request={request as AuthorizeDappRequest} clientTrust={clientTrust}/>
       );
     case MWARequestType.SignAndSendTransactionsRequest:
       return (
         <SignAndSendTransactionScreen
           request={request as SignAndSendTransactionsRequest}
+          clientTrust={clientTrust}
         />
       );
     case MWARequestType.SignMessagesRequest:
@@ -185,12 +194,10 @@ export function MWAComponent() {
   return (
     <SafeAreaView>
       <WalletProvider>
-        <ClientTrustProvider clientTrust={clientTrust}>
           <View style={styles.container}>
             <Text>REQUEST: {currentRequest?.__type.toString()}</Text>
-            {getRequestScreenComponent(currentRequest)}
+            {getRequestScreenComponent(currentRequest, clientTrust)}
           </View>
-        </ClientTrustProvider>
       </WalletProvider>
     </SafeAreaView>
   );

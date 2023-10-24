@@ -6,26 +6,27 @@ import {
   resolve,
 } from '../lib/mobile-wallet-adapter-walletlib/src';
 import {
-    SendTransactionsError,
-  getIconFromIdentityUri, getSignedPayloads, sendSignedTransactions,
+  SendTransactionsError,
+  getIconFromIdentityUri,
+  getSignedPayloads,
+  sendSignedTransactions,
 } from '../utils/dapp';
 import {useWallet} from '../components/WalletProvider';
-import {useClientTrust} from '../components/ClientTrustProvider';
-import {VerificationState, verificationStatusText} from '../utils/clientTrust';
+import {ClientTrust, VerificationState, verificationStatusText} from '../utils/clientTrust';
 import {Text, View} from 'react-native';
 import AppInfo from '../components/AppInfo';
 import ButtonGroup from '../components/ButtonGroup';
 
-
 export interface SignAndSendTransactionScreenProps {
   request: SignAndSendTransactionsRequest;
+  clientTrust: ClientTrust;
 }
 
-function SignAndSendTransactionScreen(props: SignAndSendTransactionScreenProps) {
-  const {request} = props;
+function SignAndSendTransactionScreen(
+  props: SignAndSendTransactionScreenProps,
+) {
+  const {request, clientTrust} = props;
   const {wallet, connection} = useWallet();
-  const {clientTrust} = useClientTrust();
-  const [verified, setVerified] = useState(false);
   const [loading, setLoading] = useState(false);
   const [verificationState, setVerificationState] = useState<
     VerificationState | undefined
@@ -44,28 +45,17 @@ function SignAndSendTransactionScreen(props: SignAndSendTransactionScreenProps) 
       setVerificationState(verificationState);
 
       const verifyClient = async () => {
-        const verificationState =
-          await clientTrust?.verifyAuthorizationSource(
-            request.appIdentity?.identityUri,
-          );
+        const verificationState = await clientTrust?.verifyAuthorizationSource(
+          request.appIdentity?.identityUri,
+        );
         setVerificationState(verificationState);
       };
-  
+
       verifyClient();
 
-      const verified =
-        (await clientTrust?.verifyPrivilegedMethodSource(
-          authScope,
-        )) ?? false;
-      setVerified(verified);
-
-      console.log('--------------')
-      console.log('--------------')
-      console.log('URI: ' + request.appIdentity?.identityUri)
-      console.log('Verifed: ' + verified)
-      console.log('State: ' + JSON.stringify(verificationState))
-      console.log('--------------')
-      console.log('--------------')
+      const verified = await clientTrust?.verifyPrivilegedMethodSource(
+        authScope,
+      );
 
       //soft decline, not great UX. Should tell the user that client was not verified
       if (!verified) {
@@ -82,14 +72,13 @@ function SignAndSendTransactionScreen(props: SignAndSendTransactionScreenProps) 
     wallet: Keypair,
     connection: Connection,
     request: SignAndSendTransactionsRequest,
-    onFinish: () => void,
   ) => {
     const [valid, signedTransactions] = getSignedPayloads(
       request.__type,
       wallet,
       request.payloads,
     );
-  
+
     if (valid.includes(false)) {
       resolve(request, {
         failReason: MWARequestFailReason.InvalidSignatures,
@@ -97,15 +86,14 @@ function SignAndSendTransactionScreen(props: SignAndSendTransactionScreenProps) 
       });
       return;
     }
-  
+
     try {
       const sigs = await sendSignedTransactions(
-        signedTransactions, 
+        signedTransactions,
         request.minContextSlot ? request.minContextSlot : undefined,
-        connection
+        connection,
       );
       resolve(request, {signedTransactions: sigs});
-      onFinish();
     } catch (e) {
       console.log('Send error: ' + e);
       if (e instanceof SendTransactionsError) {
@@ -117,6 +105,18 @@ function SignAndSendTransactionScreen(props: SignAndSendTransactionScreenProps) 
         throw e;
       }
     }
+  };
+
+  const signAndSend = async () => {
+    if (loading) return;
+    setLoading(true);
+    signAndSendTransaction(wallet, connection, request).finally(() =>
+      setLoading(false),
+    );
+  };
+
+  const reject = () => {
+    resolve(request, {failReason: MWARequestFailReason.UserDeclined});
   }
 
   return (
@@ -138,18 +138,8 @@ function SignAndSendTransactionScreen(props: SignAndSendTransactionScreenProps) 
       <ButtonGroup
         positiveButtonText="Sign and Send"
         negativeButtonText="Reject"
-        positiveOnClick={() => {
-          setLoading(true);
-          signAndSendTransaction(
-            wallet as Keypair,
-            connection,
-            request,
-            () => setLoading(false),
-          );
-        }}
-        negativeOnClick={() => {
-          resolve(request, {failReason: MWARequestFailReason.UserDeclined});
-        }}
+        positiveOnClick={signAndSend}
+        negativeOnClick={reject}
       />
       {loading && <Text>Loading...</Text>}
     </View>

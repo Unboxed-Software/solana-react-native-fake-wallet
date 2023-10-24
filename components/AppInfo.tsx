@@ -23,11 +23,11 @@ function AppInfo(props: AppInfoProps) {
       <Text>{title}</Text>
       <View>
         <Text>Request Metadata</Text>
-        <Text>Cluster: {cluster}</Text>
-        <Text>App name: {appName}</Text>
-        <Text>App URI: {uri}</Text>
-        <Text>Status: {verificationText}</Text>
-        <Text>Scope: {scope}</Text>
+        <Text>Cluster: {cluster ? cluster : 'NA'}</Text>
+        <Text>App name: {appName ? appName : 'NA'}</Text>
+        <Text>App URI: {uri ? uri : 'NA'}</Text>
+        <Text>Status: {verificationText ? verificationText : 'NA'}</Text>
+        <Text>Scope: {scope ? scope : 'NA'}</Text>
       </View>
     </>
   );

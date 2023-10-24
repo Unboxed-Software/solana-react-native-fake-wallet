@@ -41,8 +41,7 @@ export interface WalletProviderProps {
 }
 
 export function WalletProvider(props: WalletProviderProps){
-  const { rpcUrl } = props;
-  const {children} = props;
+  const { rpcUrl, children } = props;
   const [keyPair, setKeyPair] = useState<Keypair | null>(null);
 
   const fetchOrGenerateKeypair = async () => {
