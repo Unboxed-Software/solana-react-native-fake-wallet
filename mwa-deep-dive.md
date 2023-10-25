@@ -156,26 +156,56 @@ Explain the `useMobileWalletAdapterSession` hook and how it allows us to capture
 
 ### 0. Prerequisites
 
-1. Install the solana mobile counter we made in the previous lesson.
-2. `git clone https://github.com/Unboxed-Software/solana-react-native-counter.git`
-3. `git checkout solution`
-4. `npm install`
-5. `npm run install`
+Before we actually start programming our wallet we need to do some setup. You will need a React Native developer environment and a Solana dApp to test on. If you have completed the [Basic Solana Mobile lesson](), both of these requirements should be met with the counter app installed on your android device/emulator.
+
+If you *haven't* completed the last lesson you will need to:
+
+1. Setup an [Android React Native developer environment](https://reactnative.dev/docs/environment-setup) with a device or emulator
+2. Install a [Devnet Solana dApp](https://github.com/Unboxed-Software/solana-react-native-counter.git)
+
+
+If you want to install the app from the previous lesson, you can:
+
+```bash
+git clone https://github.com/Unboxed-Software/solana-react-native-counter.git
+cd solana-react-native-counter
+git checkout solution
+npm i
+npm run install
+```
 
 ### 1. Plan out App Structure
 
-`WalletProvider.tsx` - In charge of handling our Keypair. It will find our Keypair in AsyncStorage.
+-- Wallet First
+- Wallet Provider
+- MainScreen
+- App.tsx
 
+-- Popup Pt 1 ( Getting it to Work )
+- MWAApp.tsx
+- index.js
+
+-- Popup Pt 2 ( Implementing Others )
+- clientTrust.ts
+
+-- Popup Pt 3 ( All Else )
+- dapp.ts
+- Authorize
+- SignAndSend
 
 ### 2. Create the App
 
-
-
+Let's create the app with:
 ```bash
 npx react-native@latest init wallet --npm
 cd wallet
 ```
 
+Now, let's install our dependancies. These are the exact same dependancies from our [Basic Solana Mobile lesson](), with two additions: `@react-native-async-storage/async-storage`, and a polyfill: `fast-text-encoding`.
+
+We will be using `async-storage` to store our Keypair so that the wallet will stay persistent through multiple sessions. It is important to note `async-storage` is ***NOT*** a safe place to keep your keys, do not use this in production. Instead, take a look at [Android's keystore system.](https://developer.android.com/privacy-and-security/keystore)
+
+Install the dependancies with:
 ```bash
 npm install \
   @solana/web3.js \
@@ -186,9 +216,17 @@ npm install \
   @coral-xyz/anchor \
   assert \
   bs58 \
-  @react-native-async-storage/async-storage
+  @react-native-async-storage/async-storage \
+  fast-text-encoding
 ```
 
+The next step is a bit messy. We need to depend on Solana's `mobile-wallet-adapter-walletlib` package. However, this package is still in development and is not available through npm. From their github:
+
+>This package is still in alpha and is not production ready. However, the API is stable and will not change drastically, so you can begin integration with your wallet.
+
+So we have to clone the repo, grab the package and make some minor edits.
+
+Let's clone and extract the package into a new directory `lib`:
 ```bash
 git clone https://github.com/solana-mobile/mobile-wallet-adapter.git
 mkdir lib
@@ -196,7 +234,14 @@ cp -rf mobile-wallet-adapter/js/packages/mobile-wallet-adapter-walletlib ./lib
 rm -rf mobile-wallet-adapter
 ```
 
-In `lib/mobile-wallet-adapter-walletlib/src/index.ts`
+Now we have to make some slight edits for our app to compile and resolve the new package.
+
+First, in `android/build.gradle`, change the `minSdkVersion` to version `23`.
+```gradle
+  minSdkVersion = 23
+```
+
+In `lib/mobile-wallet-adapter-walletlib/src/index.ts` remove all `.js` from the end of the exports.
 ```ts
 export * from './mwaSessionEvents';
 export * from './resolve';
@@ -204,29 +249,49 @@ export * from './useMobileWalletAdapterSession';
 export * from './useDigitalAssetLinks';
 ```
 
-In `lib/mobile-wallet-adapter-walletlib/src/useMobileWalletAdapterSession.ts`
+In `lib/mobile-wallet-adapter-walletlib/src/useMobileWalletAdapterSession.ts` remove the `.js` from the following imports:
 ```ts
 import { MWASessionEvent, MWASessionEventType } from './mwaSessionEvents';
 import { MWARequest, MWARequestType } from './resolve';
 ```
 
-In `lib/mobile-wallet-adapter-walletlib\android\src\main\java\com\solanamobile\mobilewalletadapterwalletlib\reactnative\MobileWalletAdapterBottomSheetActivity.kt`
+In `lib/mobile-wallet-adapter-walletlib\android\src\main\java\com\solanamobile\mobilewalletadapterwalletlib\reactnative\MobileWalletAdapterBottomSheetActivity.kt` comment out the `protected fun isConcurrentRootEnabled() = false` line at the very bottom.
 ```kt
 // override protected fun isConcurrentRootEnabled() = false
 ```
 
+Lastly, add `@solana-mobile/mobile-wallet-adapter-walletlib` to our `package.json` dependancies with the filepath as the resolution:
 ```json
 "dependencies": {
     "@solana-mobile/mobile-wallet-adapter-walletlib": "file:./lib/mobile-wallet-adapter-walletlib",
 }
 ```
 
+Finish setup off with installing the packages and building the app. You should get the default React Native app showing up on your device.
+```bash
+npm i
+npm run android
+```
+
+If you get any errors make sure you double check you've followed all of the steps above.
+
 ### Wallet Component
-Let's get the easy stuff out of the way. The app portion of our wallet will create a keypair on startup, store it in AsyncStorage and display the public key. That's it. We can accomplish this in three files `WalletProvider.tsx`, `MainScreen.tsx` and editing `App.tsx`.
+The first part of our wallet app is the actual app part, it will do the following:
 
-Create folders, `components` and `screens`
+- Generate a `Keypair` on first load
+- Display the address and balance
+- Allow users to airdrop some Devnet sol to their wallet
 
-Wallet Provider
+This can all be accomplished in two additional files:
+
+`WalletProvider.tsx` - Generates a Keypair and stores it in `async-storage` and fetches the Keypair on subsequent sessions. It also provides the `Connection`.
+
+`MainScreen.tsx` - Shows the wallet, it's balance and an airdrop button.
+
+
+Let's start with the `WalletProvider.tsx`. This file will use `async-storage` to store a base58 encoded version of a `Keypair`. The provider will check the storage key of `@my_fake_wallet_keypair_key`, if nothing returns, then the provider should generate and store a keypair. The `WalletProvider` will then return it's context including the `wallet` and `connection`, so the rest of the app can access it using `useWallet()`.
+
+Create a new directory `components` and a new file `WalletProvider.tsx` within it
 ```tsx
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {Connection, Keypair} from '@solana/web3.js';
@@ -235,22 +300,10 @@ import {ReactNode, createContext, useContext, useEffect, useState} from 'react';
 
 const ASYNC_STORAGE_KEY = '@my_fake_wallet_keypair_key';
 
-type EncodedKeypair = {
+interface EncodedKeypair {
   publicKeyBase58: string;
   secretKeyBase58: string;
 };
-
-export type WalletContextType = {
-  wallet: Keypair | null;
-  connection: Connection;
-};
-
-const WalletContext = createContext<WalletContextType>({
-  wallet: null,
-  connection: new Connection('https://api.devnet.solana.com'),
-});
-
-export const useWallet = () => useContext(WalletContext);
 
 
 function encodeKeypair(keypair: Keypair): EncodedKeypair {
@@ -265,14 +318,27 @@ function decodeKeypair(encodedKeypair: EncodedKeypair): Keypair {
   return Keypair.fromSecretKey(secretKey);
 };
 
+export interface WalletContextData {
+  wallet: Keypair | null;
+  connection: Connection;
+};
+
+const WalletContext = createContext<WalletContextData>({
+  wallet: null,
+  connection: new Connection('https://api.devnet.solana.com'),
+});
+
+export const useWallet = () => useContext(WalletContext);
+
+
+
 export interface WalletProviderProps {
   rpcUrl?: string;
   children: ReactNode;
 }
 
 export function WalletProvider(props: WalletProviderProps){
-  const { rpcUrl } = props;
-  const {children} = props;
+  const { rpcUrl, children } = props;
   const [keyPair, setKeyPair] = useState<Keypair | null>(null);
 
   const fetchOrGenerateKeypair = async () => {
@@ -312,30 +378,71 @@ export function WalletProvider(props: WalletProviderProps){
     </WalletContext.Provider>
   );
 };
-
 ```
 
-Main Screen
+Now let's make the `MainScreen.tsx`. It's pretty simple, it grabs the `wallet` and `connection` from `useWallet()`, and then shows the address and balance. To make the wallet usable it also has an airdrop button. This is needed to send any type of transaction.
+
+Create a new directory `screens` and place `MainScreen.tsx` within in:
 ```tsx
-import {StyleSheet, Text, View} from 'react-native';
-import { useWallet } from '../components/WalletProvider';
+import {Button, StyleSheet, Text, View} from 'react-native';
+import {useWallet} from '../components/WalletProvider';
+import {useEffect, useState} from 'react';
+import {LAMPORTS_PER_SOL} from '@solana/web3.js';
 
 const styles = StyleSheet.create({
   container: {
     width: '100%',
     height: '100%',
     justifyContent: 'center', // Centers children along the main axis (vertically for column)
-    alignItems: 'center',     // Centers children along the cross axis (horizontally for column)
+    alignItems: 'center', // Centers children along the cross axis (horizontally for column)
   },
 });
 
-const MainScreen = () => {
-  const {wallet} = useWallet();
+function MainScreen(){
+  const [isLoading, setIsLoading] = useState(false);
+  const [balance, setBalance] = useState<null | number>(null);
+  const {wallet, connection} = useWallet();
+
+  useEffect(() => {
+    updateBalance();
+  }, [wallet]);
+
+  const updateBalance = async () => {
+    if (wallet) {
+      await connection.getBalance(wallet.publicKey).then(lamports => {
+        setBalance(lamports / LAMPORTS_PER_SOL);
+      });
+    }
+  };
+
+  const airdrop = async () => {
+    if (wallet && !isLoading) {
+      setIsLoading(true);
+      try {
+        const signature = await connection.requestAirdrop(
+          wallet.publicKey,
+          LAMPORTS_PER_SOL,
+        );
+        await connection.confirmTransaction(signature);
+        await updateBalance();
+      } catch (e) {
+        console.log(e);
+      }
+
+      setIsLoading(false);
+    }
+  };
 
   return (
     <View style={styles.container}>
-        <Text>Wallet:</Text>
-        <Text>{wallet?.publicKey.toString() ?? 'No Wallet'}</Text>
+      <Text>Wallet:</Text>
+      <Text>{wallet?.publicKey.toString() ?? 'No Wallet'}</Text>
+      <Text>Balance:</Text>
+      <Text>{balance?.toFixed(5) ?? ''}</Text>
+      {isLoading && <Text>Loading...</Text>}
+      {balance != null && !isLoading && balance < 0.005 && (
+        <Button title="Airdrop 1 SOL" onPress={airdrop} />
+      )}
     </View>
   );
 };
@@ -343,7 +450,7 @@ const MainScreen = () => {
 export default MainScreen;
 ```
 
-App.tsx
+Lastly, let's edit the `App.tsx` file to complete the 'app' section of our wallet:
 ```tsx
 import {SafeAreaView, Text, View} from 'react-native';
 import MainScreen from './screens/MainScreen';
@@ -362,48 +469,72 @@ function App(): JSX.Element {
 }
 
 export default App;
+
 ```
 
-### MWA Component
-
-```js
-import {AppRegistry} from 'react-native';
-import App from './App';
-import {name as appName} from './app.json';
-import MWAComponent from './components/MWAComponent'
-
-// Mock event listener functions to prevent them from fataling.
-window.addEventListener = () => {};
-window.removeEventListener = () => {};
-
-AppRegistry.registerComponent(appName, () => App);
-
-// Register the MWA component
-AppRegistry.registerComponent(
-'MobileWalletAdapterEntrypoint',
-  ()=> MWAComponent,
-);
+Make sure everything is working by building and deploying:
+```bash
+npm run android
 ```
 
-MWA Barebones
+### Barebones MWA App
+The MWA 'app' is what is seen when a Solana dApp sends out an intent for `solana-wallet://`. Our MWA app will listen for this, establish a connection and render this app. Fortunately, we don't have to implement anything low-level. Solana has done the hard work for us in the `mobile-wallet-adapter-walletlib` library. All we have to do is create the view and handle the requests! If you want to know more about how the connection is made, you can take a [look at the spec](https://github.com/solana-mobile/mobile-wallet-adapter/blob/main/spec/spec.md). 
+
+Let's start out with the absolute bare bones of of the MWA app. All it will do is pop up when a dApp connects to it and simply say 'I'm a wallet'.
+
+To make this pop up when a Solana dApp requests access, we'll need the `useMobileWalletAdapterSession` from the walletlib. This requires a four things:
+
+- `walletName` - name of the wallet
+- `config` - some simple wallet configurations of type `MobileWalletAdapterConfig`
+- `handleRequest` - callback function to handle requests from the dApp
+- `handleSessionEvent` - callback function to handle session events 
+
+Here is an example of the minimum setup to satisfy `useMobileWalletAdapterSession`:
+```tsx
+  const config: MobileWalletAdapterConfig = useMemo(() => {
+    return {
+      supportsSignAndSendTransactions: true,
+      maxTransactionsPerSigningRequest: 10,
+      maxMessagesPerSigningRequest: 10,
+      supportedTransactionVersions: [0, 'legacy'],
+      noConnectionWarningTimeoutMs: 3000,
+    };
+  }, []);
+
+  const handleRequest = useCallback((request: MWARequest) => {
+  }, []);
+
+  const handleSessionEvent = useCallback((sessionEvent: MWASessionEvent) => {
+  }, []);
+
+  useMobileWalletAdapterSession(
+    'React Native Fake Wallet',
+    config,
+    handleRequest,
+    handleSessionEvent,
+  );
+```
+
+We will be implementing function into `handleRequest` and `handleSessionEvent` soon, but first let's make the MWA app work.
+
+Create a new file in the root of your project `MWAApp.tsx`:
 ```tsx
 import {useCallback, useMemo } from 'react';
 import { SafeAreaView, StyleSheet, Text, View} from 'react-native';
-import { WalletProvider } from './WalletProvider';
-import { MWARequest, MWASessionEvent, MobileWalletAdapterConfig, useMobileWalletAdapterSession } from '../lib/mobile-wallet-adapter-walletlib/src';
+import { WalletProvider } from './components/WalletProvider';
+import { MWARequest, MWASessionEvent, MobileWalletAdapterConfig, useMobileWalletAdapterSession } from './lib/mobile-wallet-adapter-walletlib/src';
 
 
 const styles = StyleSheet.create({
   container: {
     margin: 0,
     bottom: 0,
-    height: '34%',
     width: '100%',
-    backgroundColor: 'white',
+    backgroundColor: 'black',
   },
 });
 
-export function MWAComponent(){
+function MWAApp(){
 
   const config: MobileWalletAdapterConfig = useMemo(() => {
     return {
@@ -433,20 +564,61 @@ export function MWAComponent(){
     <SafeAreaView>
         <WalletProvider>
             <View style={styles.container}>
-                <Text>I'm a wallet!</Text>
+                <Text style={{fontSize: 50}}>I'm a wallet!</Text>
             </View>
         </WalletProvider>
     </SafeAreaView>
   );
 };
+
+export default MWAApp;
 ```
 
-utils/clientTrust.ts
+The last thing we need to do to make this all work is to register our MWA app as an entrypoint in `index.js` under the name `MobileWalletAdapterEntrypoint`.
+
+Change `index.js` to reflect the following:
+```js
+import {AppRegistry} from 'react-native';
+import App from './App';
+import {name as appName} from './app.json';
+import MWAApp from './MWAApp'
+
+// Mock event listener functions to prevent them from fataling.
+window.addEventListener = () => {};
+window.removeEventListener = () => {};
+
+AppRegistry.registerComponent(appName, () => App);
+
+// Register the MWA component
+AppRegistry.registerComponent(
+'MobileWalletAdapterEntrypoint',
+  () => MWAApp,
+);
+```
+
+Let's now test this out. 
+
+Build and deploy it:
+```bash
+npm run android
+```
+
+Open your Devnet Solana dApp, ideally the `counter` app from the previous lesson. Then make a request.
+
+
+### Client Trust
+Let's take a bit of a necessary detour and talk about client trust. When another app invokes our wallet, the dApp should provide us some information about the app that is accessing our wallet. With this, we should check some things to make sure the request is legitimate.
+
+In a word, we will want to verify the external dApp, however it is out of scope of today's lesson. If you'd like to read more about how you would verify the app, the [spec has your responsibilities](https://solana-mobile.github.io/mobile-wallet-adapter/spec/spec.html#dapp-identity-verification) laid out.   
+
+//TODO
+
+Create a new folder `utils` and create the `clientTrust.ts` file within it:
 ```ts
 import {
     getCallingPackageUid,
     verifyCallingPackage,
-  } from '../mobile-wallet-adapter-walletlib/src';
+  } from '../lib/mobile-wallet-adapter-walletlib/src';
   
   enum AssociationType {
     LocalFromBrowser = 'web',
@@ -495,7 +667,7 @@ import {
     | VerificationFailed
     | NotVerifiable;
   
-  export const verificationStatusText = function (
+  export function verificationStatusText (
     verificationState: VerificationState | undefined,
   ): string {
     if (verificationState instanceof VerificationInProgress)
@@ -541,7 +713,7 @@ import {
     ): Promise<VerificationState> {
       switch (this.associationType) {
         case AssociationType.LocalFromBrowser:
-          if (clientIdentityUri != null && clientIdentityUri != 'null') {
+          if (clientIdentityUri) {
             //implement actual web based verification here
             await setTimeout(() => {}, 1500); //simulating web verification
             console.debug(
@@ -559,7 +731,7 @@ import {
           }
   
         case AssociationType.LocalFromApp:
-          if (clientIdentityUri != null && clientIdentityUri != 'null') {
+          if (clientIdentityUri) {
             const verified = await verifyCallingPackage(clientIdentityUri);
             if (verified) {
               const uid = await getCallingPackageUid();
@@ -600,7 +772,6 @@ import {
   
     async verifyPrivilegedMethodSource(
       authorizationScope: string,
-      clientIdentityUri?: string,
     ): Promise<boolean> {
       if (authorizationScope.startsWith(AssociationType.LocalFromBrowser)) {
         if (this.associationType != AssociationType.LocalFromBrowser) {
@@ -701,250 +872,60 @@ import {
   }
 ```
 
-components/ClientTrustProvider
-```tsx
-import {ClientTrust} from '../utils/clientTrust';
-import {createContext, useContext, ReactNode} from 'react';
+### Setup MWA App
+Let's flesh out our MWAApp.tsx
 
-interface ClientTrustContextType {
-  clientTrustUseCase: ClientTrust | null;
-}
-
-const ClientTrustContext = createContext<ClientTrustContextType>({
-  clientTrustUseCase: null,
-});
-
-export const useClientTrust = () => useContext(ClientTrustContext);
-
-type ClientTrustProviderProps = {
-  clientTrustUseCase: ClientTrust | null;
-  children: ReactNode;
-};
-
-const ClientTrustProvider = (props: ClientTrustProviderProps) => {
-  return (
-    <ClientTrustContext.Provider
-      value={{clientTrustUseCase: props.clientTrustUseCase}}>
-      {props.children}
-    </ClientTrustContext.Provider>
-  );
-};
-
-export default ClientTrustProvider;
-```
-
-
-dapp.ts
-```ts
-import {Keypair, Signer, VersionedTransaction} from '@solana/web3.js';
-import {MWARequestType} from '../lib/mobile-wallet-adapter-walletlib/src';
-import {sign} from '@solana/web3.js/src/utils/ed25519';
-
-export const SIGNATURE_LEN = 64;
-export const PUBLIC_KEY_LEN = 32;
-
-export function signTransactionRaw(tsxBytes: Uint8Array, keypair: Keypair): Uint8Array {
-  const tsx: VersionedTransaction =
-    VersionedTransaction.deserialize(tsxBytes);
-  const signer: Signer = {
-    publicKey: keypair.publicKey,
-    secretKey: keypair.secretKey,
-  };
-  tsx.sign([signer]);
-  return tsx.serialize();
-}
-
-export function signMessageRaw(msgBytes: Uint8Array, keypair: Keypair) {
-  return sign(msgBytes, keypair.secretKey.slice(0, 32));
-}
-
-export function getIconFromIdentityUri(appIdentity?: any){
-  if (
-    appIdentity?.iconRelativeUri &&
-    appIdentity.identityUri &&
-    appIdentity.iconRelativeUri != 'null' &&
-    appIdentity.identityUri != 'null'
-  ) {
-    return new URL(
-      appIdentity.iconRelativeUri,
-      appIdentity.identityUri,
-    ).toString();
-  }
-
-  return null;
-};
-
-export function getSignedPayloads(
-  type: MWARequestType,
-  wallet: Keypair,
-  payloads: Uint8Array[],
-): [boolean[], Uint8Array[]] {
-  const valid = payloads.map(_ => true);
-  let signedPayloads;
-  if (
-    type == MWARequestType.SignTransactionsRequest ||
-    type == MWARequestType.SignAndSendTransactionsRequest
-  ) {
-    signedPayloads = payloads.map((payload, index) => {
-      try {
-        return signTransactionRaw(new Uint8Array(payload), wallet);
-      } catch (e) {
-        console.log('sign error: ' + e);
-        valid[index] = false;
-        return new Uint8Array([]);
-      }
-    });
-  } else {
-    signedPayloads = payloads.map((payload, index) => {
-      try {
-        return signMessageRaw(new Uint8Array(payload), wallet);
-      } catch (e) {
-        console.log('sign error: ' + e);
-        valid[index] = false;
-        return new Uint8Array([]);
-      }
-    });
-  }
-
-  return [valid, signedPayloads];
-};
-```
-
-MWAComponent.tsx
+Change your `MWAApp.tsx` to reflect the following:
 ```tsx
 import {useCallback, useEffect, useMemo, useState} from 'react';
-import {BackHandler, Linking, SafeAreaView, StyleSheet, Text, View} from 'react-native';
-import {WalletProvider} from './WalletProvider';
 import {
+  BackHandler,
+  Linking,
+  SafeAreaView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import {WalletProvider} from './components/WalletProvider';
+import {
+  AuthorizeDappRequest,
   MWARequest,
   MWARequestFailReason,
   MWARequestType,
   MWASessionEvent,
   MWASessionEventType,
   MobileWalletAdapterConfig,
+  ReauthorizeDappCompleteResponse,
   ReauthorizeDappResponse,
+  SignAndSendTransactionsRequest,
   getCallingPackage,
   resolve,
   useMobileWalletAdapterSession,
-} from '../lib/mobile-wallet-adapter-walletlib/src';
-import ClientTrustProvider from './ClientTrustProvider';
-import { ClientTrust, NotVerifiable, VerificationFailed, VerificationSucceeded } from '../utils/clientTrust';
+} from './lib/mobile-wallet-adapter-walletlib/src';
+import {
+  ClientTrust,
+  NotVerifiable,
+  VerificationFailed,
+  VerificationSucceeded,
+} from './utils/clientTrust';
 
 const styles = StyleSheet.create({
   container: {
     margin: 0,
-    height: '100%',
     width: '100%',
     backgroundColor: 'black',
     color: 'black',
   },
 });
 
-function getRequestScreenComponent(request: MWARequest | null | undefined){
-  switch (request?.__type) {
-    case MWARequestType.AuthorizeDappRequest:
-    case MWARequestType.SignAndSendTransactionsRequest:
-    case MWARequestType.SignMessagesRequest:
-    case MWARequestType.SignTransactionsRequest:
-    default: return (<Text>TODO Show screen for {request?.__type}</Text>)
-  }
-};
-
-export function MWAComponent(){
-
-  // ------------------ STATE -------------------
+function MWAApp() {
   const [currentRequest, setCurrentRequest] = useState<MWARequest | null>(null);
-  const [currentSession, setCurrentSession] = useState<MWASessionEvent | null>(null);
-  const [clientTrustUseCase, setClientTrustUseCase] = useState<ClientTrust | null>(null);
+  const [currentSession, setCurrentSession] = useState<MWASessionEvent | null>(
+    null,
+  );
+  const [clientTrust, setClientTrust] = useState<ClientTrust | null>(null);
 
-  // ------------------ EFFECTS -------------------
-  useEffect(() => {
-    initClientTrustUseCase();
-
-    BackHandler.addEventListener('hardwareBackPress', () => {
-      resolve(currentRequest as any, {
-        failReason: MWARequestFailReason.UserDeclined,
-      });
-      return false;
-    });
-  }, []);
-
-  useEffect(() => {
-    if (currentSession?.__type == MWASessionEventType.SessionTerminatedEvent) {
-      endWalletSession();
-      return;
-    }
-
-    if (!currentRequest) {
-      return;
-    }
-
-    if (currentRequest.__type == MWARequestType.ReauthorizeDappRequest) {
-      let request = currentRequest;
-      const authorizationScope = new TextDecoder().decode(
-        request.authorizationScope,
-      );
-
-      Promise.race([
-        clientTrustUseCase!!.verifyReauthorizationSource(
-          authorizationScope,
-          request.appIdentity?.identityUri,
-        ),
-        async () => {
-          setTimeout(() => {
-            throw new Error(
-              'Timed out waiting for reauthorization source verification',
-            );
-          }, 3000);
-        },
-      ])
-        .then(verificationState => {
-          if (verificationState instanceof VerificationSucceeded) {
-            console.log('Reauthorization source verification succeeded');
-            resolve(request, {} as ReauthorizeDappResponse);
-          } else if (verificationState instanceof NotVerifiable) {
-            console.log('Reauthorization source not verifiable; approving');
-            resolve(request, {} as ReauthorizeDappResponse);
-          } else if (verificationState instanceof VerificationFailed) {
-            console.log('Reauthorization source verification failed');
-            resolve(request as any, {failReason: MWARequestFailReason.UserDeclined});
-          }
-        })
-        .catch(() => {
-          console.log(
-            'Timed out waiting for reauthorization source verification',
-          );
-          resolve(request as any, {
-            failReason: 'Timed out in verification',
-          });
-        });
-    }
-  }, [currentRequest]);
-
-  // ------------------ MEMOS -------------------
-
-  const config: MobileWalletAdapterConfig = useMemo(() => {
-    return {
-      supportsSignAndSendTransactions: true,
-      maxTransactionsPerSigningRequest: 10,
-      maxMessagesPerSigningRequest: 10,
-      supportedTransactionVersions: [0, 'legacy'],
-      noConnectionWarningTimeoutMs: 3000,
-    };
-  }, []);
-
-  // ------------------ FUNCTIONS -------------------
-
-  const initClientTrustUseCase = async () => {
-    const url = await Linking.getInitialURL();
-    const callingPackage: string | undefined = await getCallingPackage();
-    const clientTrustUseCase = new ClientTrust(
-      url ?? '',
-      callingPackage,
-    );
-
-    setClientTrustUseCase(clientTrustUseCase);
-  };
+  // ------------------- FUNCTIONS --------------------
 
   const endWalletSession = useCallback(() => {
     setTimeout(() => {
@@ -960,6 +941,102 @@ export function MWAComponent(){
     setCurrentSession(sessionEvent);
   }, []);
 
+  // ------------------- EFFECTS --------------------
+
+  useEffect(() => {
+    const initClientTrust = async () => {
+      const url = await Linking.getInitialURL();
+      const callingPackage: string | undefined = await getCallingPackage();
+      const newClientTrust = new ClientTrust(url ?? '', callingPackage);
+
+      setClientTrust(newClientTrust);
+    };
+
+    initClientTrust();
+
+    BackHandler.addEventListener('hardwareBackPress', () => {
+      resolve(currentRequest as any, {
+        failReason: MWARequestFailReason.UserDeclined,
+      });
+      return false;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (currentSession?.__type == MWASessionEventType.SessionTerminatedEvent) {
+      endWalletSession();
+    }
+  }, [currentSession]);
+
+  useEffect(() => {
+    if (!currentRequest) {
+      return;
+    }
+
+    if (currentRequest.__type == MWARequestType.ReauthorizeDappRequest) {
+      let request = currentRequest;
+      const authorizationScope = new TextDecoder().decode(
+        request.authorizationScope,
+      );
+
+      Promise.race([
+        clientTrust!!.verifyReauthorizationSource(
+          authorizationScope,
+          request.appIdentity?.identityUri,
+        ),
+        async () => {
+          setTimeout(() => {
+            throw new Error(
+              'Timed out waiting for reauthorization source verification',
+            );
+          }, 3000);
+        },
+      ])
+        .then(verificationState => {
+          if (verificationState instanceof VerificationSucceeded) {
+            console.log('Reauthorization source verification succeeded');
+            resolve(request, {
+              authorizationScope: new TextEncoder().encode(
+                verificationState?.authorizationScope,
+              ),
+            } as ReauthorizeDappCompleteResponse);
+          } else if (verificationState instanceof NotVerifiable) {
+            console.log('Reauthorization source not verifiable; approving');
+            resolve(request, {
+              authorizationScope: new TextEncoder().encode(
+                verificationState?.authorizationScope,
+              ),
+            } as ReauthorizeDappCompleteResponse);
+          } else if (verificationState instanceof VerificationFailed) {
+            console.log('Reauthorization source verification failed');
+            resolve(request, {
+              failReason: MWARequestFailReason.AuthorizationNotValid,
+            });
+          }
+        })
+        .catch(() => {
+          console.log(
+            'Timed out waiting for reauthorization source verification',
+          );
+          resolve(request, {
+            failReason: 'Timed out in verification',
+          } as ReauthorizeDappResponse);
+        });
+    }
+  }, [currentRequest, endWalletSession]);
+
+  // ------------------- MWA --------------------
+
+  const config: MobileWalletAdapterConfig = useMemo(() => {
+    return {
+      supportsSignAndSendTransactions: true,
+      maxTransactionsPerSigningRequest: 10,
+      maxMessagesPerSigningRequest: 10,
+      supportedTransactionVersions: [0, 'legacy'],
+      noConnectionWarningTimeoutMs: 3000,
+    };
+  }, []);
+
   useMobileWalletAdapterSession(
     'React Native Fake Wallet',
     config,
@@ -967,23 +1044,62 @@ export function MWAComponent(){
     handleSessionEvent,
   );
 
+  // ------------------- RENDER --------------------
+
+  const renderRequest = () => {
+    if (!currentRequest) {
+      return <Text>No request</Text>;
+    }
+  
+    if (!clientTrust) {
+      return <Text>No client trust</Text>;
+    }
+  
+    switch (currentRequest?.__type) {
+      case MWARequestType.AuthorizeDappRequest:
+      case MWARequestType.SignAndSendTransactionsRequest:
+      case MWARequestType.SignMessagesRequest:
+      case MWARequestType.SignTransactionsRequest:
+      default:
+        return <Text>TODO Show screen for {currentRequest?.__type}</Text>;
+    }
+  }
+
+  // ------------------- RENDER --------------------
+
   return (
     <SafeAreaView>
       <WalletProvider>
-        <ClientTrustProvider clientTrustUseCase={clientTrustUseCase}>
-          <View style={styles.container}>
-            {getRequestScreenComponent(currentRequest)}
-          </View>
-        </ClientTrustProvider>
+        <View style={styles.container}>
+          <Text>REQUEST: {currentRequest?.__type.toString()}</Text>
+          {renderRequest()}
+        </View>
       </WalletProvider>
     </SafeAreaView>
   );
-};
+}
 
-export default MWAComponent;
+export default MWAApp;
 ```
 
-AppInfo
+### Extra Components
+Lets take one more detour and create some nice helper UI components. Simply, we will define a format for some text with `AppState.tsx` and some buttons in `ButtonGroup.tsx`.
+
+`AppInfo` will show us all relevant information coming from the dApp:
+
+```ts
+  interface AppInfoProps {
+    iconSource?: any; 
+    title?: string;
+    cluster?: string;
+    appName?: string;
+    uri?: string;
+    verificationText?: string;
+    scope?: string;
+  }
+```
+
+Create `components/AppInfo.tsx`:
 ```tsx
 import {Image, Text, View} from 'react-native';
 
@@ -1010,11 +1126,11 @@ function AppInfo(props: AppInfoProps) {
       <Text>{title}</Text>
       <View>
         <Text>Request Metadata</Text>
-        <Text>Cluster: {cluster}</Text>
-        <Text>App name: {appName}</Text>
-        <Text>App URI: {uri}</Text>
-        <Text>Status: {verificationText}</Text>
-        <Text>Scope: {scope}</Text>
+        <Text>Cluster: {cluster ? cluster : 'NA'}</Text>
+        <Text>App name: {appName ? appName : 'NA'}</Text>
+        <Text>App URI: {uri ? uri : 'NA'}</Text>
+        <Text>Status: {verificationText ? verificationText : 'NA'}</Text>
+        <Text>Scope: {scope ? scope : 'NA'}</Text>
       </View>
     </>
   );
@@ -1023,7 +1139,9 @@ function AppInfo(props: AppInfoProps) {
 export default AppInfo;
 ```
 
-Button Group
+Now, let's create a component that groups an accept and reject button together.
+
+Create `components/ButtonGroup.tsx`
 ```tsx
 import {Button, Dimensions, StyleSheet, View} from 'react-native';
 
@@ -1061,38 +1179,179 @@ const ButtonGroup = (props: ButtonGroupProps) => {
 export default ButtonGroup;
 ```
 
+### dapp
 
 ```tsx
+import {
+  Connection,
+  Keypair,
+  SendOptions,
+  Signer,
+  TransactionSignature,
+  VersionedTransaction,
+  clusterApiUrl,
+} from '@solana/web3.js';
+import {MWARequestType} from '../lib/mobile-wallet-adapter-walletlib/src';
+import {sign} from '@solana/web3.js/src/utils/ed25519';
+import {decode} from 'bs58';
+
+export const SIGNATURE_LEN = 64;
+export const PUBLIC_KEY_LEN = 32;
+
+export class SendTransactionsError extends Error {
+  valid: boolean[];
+  constructor(message: string, valid: boolean[]) {
+    super(message);
+    this.name = 'SendTransactionErrors';
+    this.valid = valid;
+  }
+}
+
+export async function sendSignedTransactions(
+  signedTransactions: Array<Uint8Array>,
+  minContextSlot: number | undefined,
+  connection: Connection,
+): Promise<Uint8Array[]> {
+  const signatures: (Uint8Array | null)[] = await Promise.all(
+    signedTransactions.map(async byteArray => {
+      // Try sending a transaction.
+      try {
+        const transaction: VersionedTransaction =
+          VersionedTransaction.deserialize(byteArray);
+
+        const sendOptions: SendOptions = {
+          minContextSlot: minContextSlot,
+          preflightCommitment: 'finalized',
+          skipPreflight: true,
+        };
+        const signature: TransactionSignature =
+          await connection.sendTransaction(transaction, sendOptions);
+
+        const response = await connection.confirmTransaction(
+          signature,
+          'confirmed',
+        );
+
+        return decode(signature);
+      } catch (error) {
+        console.log('Failed sending transaction ' + error);
+        return null;
+      }
+    }),
+  );
+
+  if (signatures.includes(null)) {
+    const valid = signatures.map(signature => {
+      return signature !== null;
+    });
+    throw new SendTransactionsError('Failed sending transactions', valid);
+  }
+
+  return signatures as Uint8Array[];
+}
+
+export function signTransactionRaw(
+  transactionBytes: Uint8Array,
+  keypair: Keypair,
+): Uint8Array {
+  const tsx: VersionedTransaction =
+    VersionedTransaction.deserialize(transactionBytes);
+  const signer: Signer = {
+    publicKey: keypair.publicKey,
+    secretKey: keypair.secretKey,
+  };
+  tsx.sign([signer]);
+  return tsx.serialize();
+}
+
+export function signMessageRaw(messageBytes: Uint8Array, keypair: Keypair) {
+  return sign(messageBytes, keypair.secretKey.slice(0, 32));
+}
+
+export function getSignedPayloads(
+  type: MWARequestType,
+  wallet: Keypair,
+  payloads: Uint8Array[],
+): [boolean[], Uint8Array[]] {
+  const valid = payloads.map(_ => true);
+  let signedPayloads;
+  if (
+    type == MWARequestType.SignTransactionsRequest ||
+    type == MWARequestType.SignAndSendTransactionsRequest
+  ) {
+    signedPayloads = payloads.map((payload, index) => {
+      try {
+        return signTransactionRaw(new Uint8Array(payload), wallet);
+      } catch (e) {
+        console.log('sign error: ' + e);
+        valid[index] = false;
+        return new Uint8Array([]);
+      }
+    });
+  } else {
+    signedPayloads = payloads.map((payload, index) => {
+      try {
+        return signMessageRaw(new Uint8Array(payload), wallet);
+      } catch (e) {
+        console.log('sign error: ' + e);
+        valid[index] = false;
+        return new Uint8Array([]);
+      }
+    });
+  }
+
+  return [valid, signedPayloads];
+}
+
+export function getIconFromIdentityUri(appIdentity?: any) {
+  if (
+    appIdentity?.iconRelativeUri &&
+    appIdentity.identityUri &&
+    appIdentity.iconRelativeUri != 'null' &&
+    appIdentity.identityUri != 'null'
+  ) {
+    return new URL(
+      appIdentity.iconRelativeUri,
+      appIdentity.identityUri,
+    ).toString();
+  }
+
+  return null;
+}
+
+```
+
+### Authorize Screen
+
+```tsx
+import 'fast-text-encoding';
 import React, { useEffect, useState } from "react";
-import { useClientTrust } from "../components/ClientTrustProvider";
 import { useWallet } from "../components/WalletProvider";
-import { VerificationState, verificationStatusText } from "../utils/clientTrust";
+import { ClientTrust, VerificationState, verificationStatusText } from "../utils/clientTrust";
 import { AuthorizeDappCompleteResponse, AuthorizeDappRequest, MWARequestFailReason, resolve } from "../lib/mobile-wallet-adapter-walletlib/src";
-import { View } from "react-native/Libraries/Components/View/View";
-import { Text } from "react-native";
 import { getIconFromIdentityUri } from "../utils/dapp";
 import AppInfo from "../components/AppInfo";
 import ButtonGroup from "../components/ButtonGroup";
+import { Text, View } from "react-native";
 
 export interface AuthorizeDappRequestScreenProps {
   request: AuthorizeDappRequest;
+  clientTrust: ClientTrust;
 }
 
 function AuthorizeDappRequestScreen(props: AuthorizeDappRequestScreenProps){
-  const { request } = props;
+  const { request, clientTrust } = props;
   const { wallet } = useWallet();
-  const { clientTrustUseCase } = useClientTrust();
   const [ verificationState, setVerificationState ] = useState<VerificationState | undefined>(undefined);
-  const [loading, setLoading] = useState(false);
 
-  if (!wallet) {
-    throw new Error('No wallet found');
+  if(!wallet){
+    throw new Error('No wallet found')
   }
 
   useEffect(() => {
     const verifyClient = async () => {
       const verificationState =
-        await clientTrustUseCase?.verifyAuthorizationSource(
+        await clientTrust?.verifyAuthorizationSource(
           request.appIdentity?.identityUri,
         );
       setVerificationState(verificationState);
@@ -1100,6 +1359,23 @@ function AuthorizeDappRequestScreen(props: AuthorizeDappRequestScreenProps){
 
     verifyClient();
   }, []);
+
+  const authorize = () => {
+    resolve(request, {
+      publicKey: wallet?.publicKey.toBytes(),
+      accountLabel: 'Backpack',
+      authorizationScope: new TextEncoder().encode(
+        verificationState?.authorizationScope,
+      ),
+    } as AuthorizeDappCompleteResponse);
+  }
+
+  const reject = () => { 
+    resolve(request, {
+      failReason: MWARequestFailReason.UserDeclined,
+    });
+  }
+
 
   return (
     <View >
@@ -1116,26 +1392,9 @@ function AuthorizeDappRequestScreen(props: AuthorizeDappRequestScreenProps){
       <ButtonGroup
         positiveButtonText="Authorize"
         negativeButtonText="Decline"
-        positiveOnClick={() => {
-          setLoading(true);
-          resolve(request, {
-            publicKey: wallet.publicKey.toBytes(),
-            accountLabel: 'Backpack',
-            authorizationScope: new TextEncoder().encode(
-              verificationState?.authorizationScope,
-            ),
-          } as AuthorizeDappCompleteResponse);
-          setLoading(false);
-        }}
-        negativeOnClick={() => {
-          setLoading(true);
-          resolve(request, {
-            failReason: MWARequestFailReason.UserDeclined,
-          });
-          setLoading(false);
-        }}
+        positiveOnClick={authorize}
+        negativeOnClick={reject}
       />
-      {loading && <Text>Loading...</Text>}
     </View>
   );
 };
@@ -1143,6 +1402,8 @@ function AuthorizeDappRequestScreen(props: AuthorizeDappRequestScreenProps){
 export default AuthorizeDappRequestScreen;
 
 ```
+
+### Sign and Send Screen
 
 ```tsx
 import {Connection, Keypair} from '@solana/web3.js';
@@ -1153,26 +1414,27 @@ import {
   resolve,
 } from '../lib/mobile-wallet-adapter-walletlib/src';
 import {
-    SendTransactionsError,
-  getIconFromIdentityUri, getSignedPayloads, sendTransactionsRaw,
+  SendTransactionsError,
+  getIconFromIdentityUri,
+  getSignedPayloads,
+  sendSignedTransactions,
 } from '../utils/dapp';
 import {useWallet} from '../components/WalletProvider';
-import {useClientTrust} from '../components/ClientTrustProvider';
-import {VerificationState, verificationStatusText} from '../utils/clientTrust';
+import {ClientTrust, VerificationState, verificationStatusText} from '../utils/clientTrust';
 import {Text, View} from 'react-native';
 import AppInfo from '../components/AppInfo';
 import ButtonGroup from '../components/ButtonGroup';
 
-
 export interface SignAndSendTransactionScreenProps {
   request: SignAndSendTransactionsRequest;
+  clientTrust: ClientTrust;
 }
 
-function SignAndSendTransaction(props: SignAndSendTransactionScreenProps) {
-  const {request} = props;
+function SignAndSendTransactionScreen(
+  props: SignAndSendTransactionScreenProps,
+) {
+  const {request, clientTrust} = props;
   const {wallet, connection} = useWallet();
-  const {clientTrust} = useClientTrust();
-  const [verified, setVerified] = useState(false);
   const [loading, setLoading] = useState(false);
   const [verificationState, setVerificationState] = useState<
     VerificationState | undefined
@@ -1190,12 +1452,18 @@ function SignAndSendTransaction(props: SignAndSendTransactionScreenProps) {
       );
       setVerificationState(verificationState);
 
-      const verified =
-        (await clientTrust?.verifyPrivilegedMethodSource(
-          authScope,
+      const verifyClient = async () => {
+        const verificationState = await clientTrust?.verifyAuthorizationSource(
           request.appIdentity?.identityUri,
-        )) ?? false;
-      setVerified(verified);
+        );
+        setVerificationState(verificationState);
+      };
+
+      verifyClient();
+
+      const verified = await clientTrust?.verifyPrivilegedMethodSource(
+        authScope,
+      );
 
       //soft decline, not great UX. Should tell the user that client was not verified
       if (!verified) {
@@ -1212,14 +1480,13 @@ function SignAndSendTransaction(props: SignAndSendTransactionScreenProps) {
     wallet: Keypair,
     connection: Connection,
     request: SignAndSendTransactionsRequest,
-    onFinish: () => void,
   ) => {
-    const [valid, signedTsxs] = getSignedPayloads(
+    const [valid, signedTransactions] = getSignedPayloads(
       request.__type,
       wallet,
       request.payloads,
     );
-  
+
     if (valid.includes(false)) {
       resolve(request, {
         failReason: MWARequestFailReason.InvalidSignatures,
@@ -1227,11 +1494,14 @@ function SignAndSendTransaction(props: SignAndSendTransactionScreenProps) {
       });
       return;
     }
-  
+
     try {
-      const sigs = await sendTransactionsRaw(signedTsxs, connection);
+      const sigs = await sendSignedTransactions(
+        signedTransactions,
+        request.minContextSlot ? request.minContextSlot : undefined,
+        connection,
+      );
       resolve(request, {signedTransactions: sigs});
-      onFinish();
     } catch (e) {
       console.log('Send error: ' + e);
       if (e instanceof SendTransactionsError) {
@@ -1243,6 +1513,18 @@ function SignAndSendTransaction(props: SignAndSendTransactionScreenProps) {
         throw e;
       }
     }
+  };
+
+  const signAndSend = async () => {
+    if (loading) return;
+    setLoading(true);
+    signAndSendTransaction(wallet, connection, request).finally(() =>
+      setLoading(false),
+    );
+  };
+
+  const reject = () => {
+    resolve(request, {failReason: MWARequestFailReason.UserDeclined});
   }
 
   return (
@@ -1264,28 +1546,53 @@ function SignAndSendTransaction(props: SignAndSendTransactionScreenProps) {
       <ButtonGroup
         positiveButtonText="Sign and Send"
         negativeButtonText="Reject"
-        positiveOnClick={() => {
-          setLoading(true);
-          signAndSendTransaction(
-            wallet as Keypair,
-            connection,
-            request,
-            () => {
-              setLoading(false);
-            },
-          );
-        }}
-        negativeOnClick={() => {
-          resolve(request, {failReason: MWARequestFailReason.UserDeclined});
-        }}
+        positiveOnClick={signAndSend}
+        negativeOnClick={reject}
       />
       {loading && <Text>Loading...</Text>}
     </View>
   );
 }
 
-export default SignAndSendTransaction;
+export default SignAndSendTransactionScreen;
+```
 
+### Finish MWA App
+
+```tsx
+  const renderRequest = () => {
+    if (!currentRequest) {
+      return <Text>No request</Text>;
+    }
+
+    if (!clientTrust) {
+      return <Text>No client trust</Text>;
+    }
+
+    switch (currentRequest?.__type) {
+      case MWARequestType.AuthorizeDappRequest:
+        return (
+          <AuthorizeDappRequestScreen
+            request={currentRequest as AuthorizeDappRequest}
+            clientTrust={clientTrust}
+          />
+        );
+      case MWARequestType.SignAndSendTransactionsRequest:
+        return (
+          <SignAndSendTransactionScreen
+            request={currentRequest as SignAndSendTransactionsRequest}
+            clientTrust={clientTrust}
+          />
+        );
+      case MWARequestType.SignMessagesRequest:
+      case MWARequestType.SignTransactionsRequest:
+      default:
+        return <Text>TODO Show screen for {currentRequest?.__type}</Text>;
+    }
+  };
 ```
 
 # Challenge
+
+
+Implement screens for `MWARequestType.SignMessagesRequest` and `MWARequestType.SignTransactionsRequest`

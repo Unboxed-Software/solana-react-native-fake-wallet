@@ -5,22 +5,10 @@ import {ReactNode, createContext, useContext, useEffect, useState} from 'react';
 
 const ASYNC_STORAGE_KEY = '@my_fake_wallet_keypair_key';
 
-type EncodedKeypair = {
+interface EncodedKeypair {
   publicKeyBase58: string;
   secretKeyBase58: string;
 };
-
-export type WalletContextType = {
-  wallet: Keypair | null;
-  connection: Connection;
-};
-
-const WalletContext = createContext<WalletContextType>({
-  wallet: null,
-  connection: new Connection('https://api.devnet.solana.com'),
-});
-
-export const useWallet = () => useContext(WalletContext);
 
 
 function encodeKeypair(keypair: Keypair): EncodedKeypair {
@@ -34,6 +22,20 @@ function decodeKeypair(encodedKeypair: EncodedKeypair): Keypair {
   const secretKey = decode(encodedKeypair.secretKeyBase58);
   return Keypair.fromSecretKey(secretKey);
 };
+
+export interface WalletContextData {
+  wallet: Keypair | null;
+  connection: Connection;
+};
+
+const WalletContext = createContext<WalletContextData>({
+  wallet: null,
+  connection: new Connection('https://api.devnet.solana.com'),
+});
+
+export const useWallet = () => useContext(WalletContext);
+
+
 
 export interface WalletProviderProps {
   rpcUrl?: string;

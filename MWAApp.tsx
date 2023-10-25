@@ -1,7 +1,6 @@
 import {useCallback, useEffect, useMemo, useState} from 'react';
 import {
   BackHandler,
-  Button,
   Linking,
   SafeAreaView,
   StyleSheet,
@@ -42,41 +41,30 @@ const styles = StyleSheet.create({
   },
 });
 
-function getRequestScreenComponent(request: MWARequest | null | undefined, clientTrust: ClientTrust | null) {
-
-  if (!request) {
-    return <Text>No request</Text>;
-  }
-
-  if (!clientTrust) {
-    return <Text>No client trust</Text>;
-  }
-
-  switch (request?.__type) {
-    case MWARequestType.AuthorizeDappRequest:
-      return (
-        <AuthorizeDappRequestScreen request={request as AuthorizeDappRequest} clientTrust={clientTrust}/>
-      );
-    case MWARequestType.SignAndSendTransactionsRequest:
-      return (
-        <SignAndSendTransactionScreen
-          request={request as SignAndSendTransactionsRequest}
-          clientTrust={clientTrust}
-        />
-      );
-    case MWARequestType.SignMessagesRequest:
-    case MWARequestType.SignTransactionsRequest:
-    default:
-      return <Text>TODO Show screen for {request?.__type}</Text>;
-  }
-}
-
 export function MWAComponent() {
   const [currentRequest, setCurrentRequest] = useState<MWARequest | null>(null);
   const [currentSession, setCurrentSession] = useState<MWASessionEvent | null>(
     null,
   );
   const [clientTrust, setClientTrust] = useState<ClientTrust | null>(null);
+
+  // ------------------- FUNCTIONS --------------------
+
+  const endWalletSession = useCallback(() => {
+    setTimeout(() => {
+      BackHandler.exitApp();
+    }, 200);
+  }, []);
+
+  const handleRequest = useCallback((request: MWARequest) => {
+    setCurrentRequest(request);
+  }, []);
+
+  const handleSessionEvent = useCallback((sessionEvent: MWASessionEvent) => {
+    setCurrentSession(sessionEvent);
+  }, []);
+
+  // ------------------- EFFECTS --------------------
 
   useEffect(() => {
     const initClientTrust = async () => {
@@ -102,30 +90,6 @@ export function MWAComponent() {
       endWalletSession();
     }
   }, [currentSession]);
-
-  const config: MobileWalletAdapterConfig = useMemo(() => {
-    return {
-      supportsSignAndSendTransactions: true,
-      maxTransactionsPerSigningRequest: 10,
-      maxMessagesPerSigningRequest: 10,
-      supportedTransactionVersions: [0, 'legacy'],
-      noConnectionWarningTimeoutMs: 3000,
-    };
-  }, []);
-
-  const endWalletSession = useCallback(() => {
-    setTimeout(() => {
-      BackHandler.exitApp();
-    }, 200);
-  }, []);
-
-  const handleRequest = useCallback((request: MWARequest) => {
-    setCurrentRequest(request);
-  }, []);
-
-  const handleSessionEvent = useCallback((sessionEvent: MWASessionEvent) => {
-    setCurrentSession(sessionEvent);
-  }, []);
 
   useEffect(() => {
     if (!currentRequest) {
@@ -184,6 +148,18 @@ export function MWAComponent() {
     }
   }, [currentRequest, endWalletSession]);
 
+  // ------------------- MWA --------------------
+
+  const config: MobileWalletAdapterConfig = useMemo(() => {
+    return {
+      supportsSignAndSendTransactions: true,
+      maxTransactionsPerSigningRequest: 10,
+      maxMessagesPerSigningRequest: 10,
+      supportedTransactionVersions: [0, 'legacy'],
+      noConnectionWarningTimeoutMs: 3000,
+    };
+  }, []);
+
   useMobileWalletAdapterSession(
     'React Native Fake Wallet',
     config,
@@ -191,13 +167,48 @@ export function MWAComponent() {
     handleSessionEvent,
   );
 
+  // ------------------- RENDER --------------------
+
+  const renderRequest = () => {
+    if (!currentRequest) {
+      return <Text>No request</Text>;
+    }
+  
+    if (!clientTrust) {
+      return <Text>No client trust</Text>;
+    }
+  
+    switch (currentRequest?.__type) {
+      case MWARequestType.AuthorizeDappRequest:
+        return (
+          <AuthorizeDappRequestScreen
+            request={currentRequest as AuthorizeDappRequest}
+            clientTrust={clientTrust}
+          />
+        );
+      case MWARequestType.SignAndSendTransactionsRequest:
+        return (
+          <SignAndSendTransactionScreen
+            request={currentRequest as SignAndSendTransactionsRequest}
+            clientTrust={clientTrust}
+          />
+        );
+      case MWARequestType.SignMessagesRequest:
+      case MWARequestType.SignTransactionsRequest:
+      default:
+        return <Text>TODO Show screen for {currentRequest?.__type}</Text>;
+    }
+  }
+
+  // ------------------- RENDER --------------------
+
   return (
     <SafeAreaView>
       <WalletProvider>
-          <View style={styles.container}>
-            <Text>REQUEST: {currentRequest?.__type.toString()}</Text>
-            {getRequestScreenComponent(currentRequest, clientTrust)}
-          </View>
+        <View style={styles.container}>
+          <Text>REQUEST: {currentRequest?.__type.toString()}</Text>
+          {renderRequest()}
+        </View>
       </WalletProvider>
     </SafeAreaView>
   );

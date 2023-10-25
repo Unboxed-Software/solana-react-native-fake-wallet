@@ -23,7 +23,7 @@ function MainScreen(){
 
   const updateBalance = async () => {
     if (wallet) {
-      connection.getBalance(wallet.publicKey).then(lamports => {
+      await connection.getBalance(wallet.publicKey).then(lamports => {
         setBalance(lamports / LAMPORTS_PER_SOL);
       });
     }
@@ -38,7 +38,7 @@ function MainScreen(){
           LAMPORTS_PER_SOL,
         );
         await connection.confirmTransaction(signature);
-        updateBalance();
+        await updateBalance();
       } catch (e) {
         console.log(e);
       }
